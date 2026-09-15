@@ -3,6 +3,75 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createMysqlAuthStore } from '../src/auth/mysql-store.js';
 import { McpOAuthProvider } from '../src/auth/provider.js';
+import { createHttpApp } from '../src/http-server.js';
+import { completeOAuthHandshake, mcpRpc } from './handshake.js';
+
+test('HTTP login and MCP tools work with the same tokens after an app restart', async () => {
+  const secret = 'disposable-http-test-secret';
+  let running;
+  let origin;
+  let port = 0;
+  async function start() {
+    // Reserve the port first so the database namespace matches the HTTP origin.
+    const { createServer } = await import('node:net');
+    if (!port) {
+      const reservation = createServer();
+      await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
+      port = reservation.address().port;
+      await new Promise(resolve => reservation.close(resolve));
+      origin = `http://127.0.0.1:${port}`;
+    }
+    const store = await createMysqlAuthStore(process.env, `${origin}/mcp`);
+    const app = createHttpApp({ authSecret: secret, baseUrl: origin, authStore: store });
+    const server = app.app.listen(port, '127.0.0.1');
+    await new Promise((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+    running = { async close() {
+      app.stop();
+      await new Promise(resolve => server.close(resolve));
+      await store.close();
+    } };
+  }
+  async function listTools(token) {
+    const init = await mcpRpc(`${origin}/mcp`, token, undefined, {
+      jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+        protocolVersion: '2025-03-26', capabilities: {},
+        clientInfo: { name: 'mph-restart-test', version: '1.0.0' },
+      },
+    });
+    assert.equal(init.status, 200);
+    await mcpRpc(`${origin}/mcp`, token, init.sessionId, {
+      jsonrpc: '2.0', method: 'notifications/initialized',
+    });
+    const result = await mcpRpc(`${origin}/mcp`, token, init.sessionId, {
+      jsonrpc: '2.0', id: 2, method: 'tools/list', params: {},
+    });
+    assert.equal(result.status, 200);
+    assert.ok(result.body.result.tools.some(tool => tool.name === 'get_bible_verse'));
+  }
+  try {
+    await start();
+    const { client, tokens } = await completeOAuthHandshake(origin, secret);
+    await listTools(tokens.access_token);
+    await running.close();
+    running = undefined;
+    await start();
+    await listTools(tokens.access_token);
+    const response = await fetch(`${origin}/token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token',
+        refresh_token: tokens.refresh_token, client_id: client.client_id,
+        resource: `${origin}/mcp` }),
+    });
+    assert.equal(response.status, 200);
+    const refreshed = await response.json();
+    await listTools(refreshed.access_token);
+  } finally {
+    await running?.close();
+  }
+});
 
 // Run explicitly against a disposable database: npm run test:mysql.
 test('MySQL preserves OAuth across restarts, isolates origins and consumes refresh tokens once', async () => {
