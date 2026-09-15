@@ -305,6 +305,7 @@ export function createHttpApp({
   baseUrl,
   useAuth = true,
   storePath,
+  authStore,
   trustProxy = false,
   maxSessions = MAX_SESSIONS,
   sessionIdleMs = SESSION_IDLE_MS,
@@ -339,6 +340,7 @@ export function createHttpApp({
       authSecret,
       resourceUrl: mcpUrl.href,
       storePath,
+      authStore,
     });
     authMiddleware = mountOAuth(app, { oauthProvider, issuerUrl, mcpUrl });
     console.error(`OAuth enabled. Issuer: ${issuerUrl.origin}`);
@@ -377,7 +379,7 @@ export function createHttpApp({
   return { app, sessions, issuerUrl, mcpUrl, stop };
 }
 
-export function startHttpServer(env = process.env) {
+export async function startHttpServer(env = process.env) {
   const port = Number(env.PORT || env.MCP_PORT || '8080');
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     console.error('ERROR: PORT or MCP_PORT must be an integer between 1 and 65535.');
@@ -406,15 +408,27 @@ export function startHttpServer(env = process.env) {
   }
 
   let httpApp;
+  let authStore;
   try {
+    if (env.AUTH_STORE && env.AUTH_STORE !== 'mysql') {
+      throw new Error('AUTH_STORE must be mysql or unset');
+    }
+    if (useAuth && env.AUTH_STORE === 'mysql') {
+      assertHttpBaseUrl(baseUrl, useAuth);
+      const { createMysqlAuthStore } = await import('./auth/mysql-store.js');
+      authStore = await createMysqlAuthStore(env, mcpResourceUrl(baseUrl).href);
+      console.error('OAuth storage: MySQL');
+    }
     httpApp = createHttpApp({
       authSecret,
       baseUrl,
       useAuth,
       storePath: env.AUTH_STORE_PATH,
+      authStore,
       trustProxy,
     });
   } catch (error) {
+    await authStore?.close();
     console.error(`ERROR: ${error.message}`);
     process.exit(1);
   }
@@ -443,7 +457,10 @@ export function startHttpServer(env = process.env) {
   const shutdown = () => {
     clearInterval(interval);
     stop();
-    server.close(() => process.exit(0));
+    server.close(async () => {
+      await authStore?.close();
+      process.exit(0);
+    });
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

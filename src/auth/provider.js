@@ -76,8 +76,8 @@ export class McpOAuthProvider {
     }
 
     const { state, persist } = createAuthState(options.storePath);
-    this.clientsStore = new InMemoryClientsStore(state.clients, persist);
-    this.tokens = new TokenStore(state, persist);
+    this.clientsStore = options.authStore?.clientsStore ?? new InMemoryClientsStore(state.clients, persist);
+    this.tokens = options.authStore?.tokens ?? new TokenStore(state, persist);
     this.codes = new Map();
     this.pendingAuths = new Map();
     this.tokenLifetimeMs = (options.tokenLifetimeHours ?? 24) * 60 * 60 * 1000
@@ -215,13 +215,13 @@ export class McpOAuthProvider {
     const refreshToken = randomUUID();
     const scopes = grantScopes(codeData.params.scopes);
 
-    this.tokens.saveAccess(accessToken, {
+    await this.tokens.saveAccess(accessToken, {
       clientId: client.client_id,
       scopes,
       expiresAt: this.now() + this.tokenLifetimeMs,
       resource: boundResource,
     });
-    this.tokens.saveRefresh(refreshToken, {
+    await this.tokens.saveRefresh(refreshToken, {
       clientId: client.client_id,
       scopes,
       expiresAt: this.now() + REFRESH_TOKEN_LIFETIME_MS,
@@ -238,7 +238,7 @@ export class McpOAuthProvider {
   }
 
   async exchangeRefreshToken(client, refreshToken, _scopes, resource) {
-    const tokenData = this.tokens.getRefresh(refreshToken);
+    const tokenData = await this.tokens.getRefresh(refreshToken);
     if (!tokenData || tokenData.expiresAt < this.now()) {
       throw new InvalidGrantError('Invalid or expired refresh token');
     }
@@ -254,7 +254,7 @@ export class McpOAuthProvider {
     const newAccessToken = randomUUID();
     const newRefreshToken = randomUUID();
     const scopes = grantScopes(tokenData.scopes);
-    this.tokens.rotateRefresh(
+    await this.tokens.rotateRefresh(
       refreshToken,
       newAccessToken,
       newRefreshToken,
@@ -282,7 +282,7 @@ export class McpOAuthProvider {
   }
 
   async verifyAccessToken(token) {
-    const tokenData = this.tokens.getAccess(token);
+    const tokenData = await this.tokens.getAccess(token);
     if (!tokenData || tokenData.expiresAt < this.now()) {
       throw new InvalidTokenError('Invalid or expired token');
     }
@@ -299,7 +299,7 @@ export class McpOAuthProvider {
   }
 
   async revokeToken(_client, request) {
-    this.tokens.deleteAccess(request.token);
-    this.tokens.deleteRefresh(request.token);
+    await this.tokens.deleteAccess(request.token);
+    await this.tokens.deleteRefresh(request.token);
   }
 }

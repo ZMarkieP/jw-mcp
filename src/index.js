@@ -5,7 +5,7 @@ const transport = process.env.MCP_TRANSPORT || 'stdio';
 
 if (transport === 'http') {
   const { startHttpServer } = await import('./http-server.js');
-  startHttpServer();
+  await startHttpServer();
 } else {
   const { StdioServerTransport } = await import(
     '@modelcontextprotocol/sdk/server/stdio.js'
