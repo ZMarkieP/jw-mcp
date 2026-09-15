@@ -378,7 +378,11 @@ export function createHttpApp({
 }
 
 export function startHttpServer(env = process.env) {
-  const port = parseInt(env.MCP_PORT || '8080', 10);
+  const port = Number(env.PORT || env.MCP_PORT || '8080');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error('ERROR: PORT or MCP_PORT must be an integer between 1 and 65535.');
+    process.exit(1);
+  }
   const useAuth = env.MCP_AUTH !== 'false';
   const authSecret = env.MCP_AUTH_SECRET;
   const baseUrl = typeof env.MCP_BASE_URL === 'string' ? env.MCP_BASE_URL.trim() : '';
