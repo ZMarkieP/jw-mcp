@@ -314,6 +314,19 @@ export function createHttpApp({
     app.set('trust proxy', 1);
   }
 
+  if (process.env.DEBUG_REQUESTS === 'true') {
+    app.use((req, _res, next) => {
+      console.error(
+        `[req] ${new Date().toISOString()} ${req.method} ${req.path} `
+        + `host=${req.headers.host || '(none)'} `
+        + `xfh=${req.headers['x-forwarded-host'] || ''} `
+        + `xfp=${req.headers['x-forwarded-proto'] || ''} `
+        + `ip=${req.socket?.remoteAddress || ''}`
+      );
+      next();
+    });
+  }
+
   app.use(securityHeaders);
   app.use(hostAllowlist(baseUrl));
   app.use(cors({ origin: true, credentials: false }));
