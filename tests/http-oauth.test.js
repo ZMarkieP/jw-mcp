@@ -404,14 +404,15 @@ describe('HTTP session limits', () => {
 });
 
 describe('Host header allowlist', () => {
-  it('rejects unexpected Host headers when baseUrl is not loopback', async () => {
+  it('rejects unexpected Host headers on non-health routes when baseUrl is not loopback', async () => {
     const ctx = await startTestServer({ baseUrl: 'https://jw-mcp.example.com' });
     try {
-      const denied = await rawRequest({
+      const deniedAuthorize = await rawRequest({
         port: ctx.port,
+        path: '/authorize',
         headers: { Host: 'evil.example' },
       });
-      assert.equal(denied.status, 400);
+      assert.equal(deniedAuthorize.status, 400);
 
       const allowed = await rawRequest({
         port: ctx.port,
@@ -427,18 +428,33 @@ describe('Host header allowlist', () => {
       });
       assert.equal(allowedWithPort.status, 200);
 
-      const loopbackHealth = await rawRequest({
-        port: ctx.port,
-        headers: { Host: '127.0.0.1:8080' },
-      });
-      assert.equal(loopbackHealth.status, 200);
-
       const loopbackAuthorize = await rawRequest({
         port: ctx.port,
         path: '/authorize',
         headers: { Host: '127.0.0.1:8080' },
       });
       assert.equal(loopbackAuthorize.status, 400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it('serves /health regardless of Host header, since it reveals no per-host data', async () => {
+    const ctx = await startTestServer({ baseUrl: 'https://jw-mcp.example.com' });
+    try {
+      const anyHost = await rawRequest({
+        port: ctx.port,
+        headers: { Host: 'evil.example' },
+      });
+      assert.equal(anyHost.status, 200);
+      assert.deepEqual(JSON.parse(anyHost.body), { status: 'ok' });
+      assertSecurityHeaders(anyHost.headers);
+
+      const loopbackHealth = await rawRequest({
+        port: ctx.port,
+        headers: { Host: '127.0.0.1:8080' },
+      });
+      assert.equal(loopbackHealth.status, 200);
     } finally {
       await ctx.close();
     }

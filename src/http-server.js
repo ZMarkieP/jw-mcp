@@ -78,15 +78,6 @@ function requestHost(req) {
   return host;
 }
 
-function hostnameFromHostHeader(host) {
-  const value = String(host || '').trim().toLowerCase();
-  if (value.startsWith('[')) {
-    const end = value.indexOf(']');
-    return end === -1 ? value : value.slice(1, end);
-  }
-  return value.split(':')[0];
-}
-
 function securityHeaders(_req, res, next) {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
@@ -104,15 +95,14 @@ function hostAllowlist(baseUrl) {
 
   const allowed = allowedHosts(url);
   return (req, res, next) => {
-    const host = requestHost(req);
-    if (
-      req.method === 'GET'
-      && req.path === '/health'
-      && isLoopbackHostname(hostnameFromHostHeader(host))
-    ) {
+    if (req.method === 'GET' && req.path === '/health') {
+      // /health reveals nothing beyond {"status":"ok"} and hosting platforms
+      // probe it from internal addresses that won't match the public Host,
+      // especially before a custom domain's DNS is connected.
       next();
       return;
     }
+    const host = requestHost(req);
     if (!host || !allowed.has(String(host).toLowerCase())) {
       res.status(400).json({ error: 'Invalid Host header' });
       return;
